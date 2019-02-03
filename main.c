@@ -199,7 +199,7 @@ void setupSPI(void){ // setup SPI master
 
    // Configure SPI module
    UCA1CTLW0 = UCSWRST;
-   UCA1CTLW0 = UCCKPL | UCMSB | UCSYNC | UCMST | UCSSEL__SMCLK;
+   UCA1CTLW0 = UCMSB | UCSYNC | UCMST | UCSSEL__SMCLK; 
    UCA1BR0 = 208; // Baud rate 4800
    UCA1BR1 = 0;
    UCACTLW0 &= ~(UCSWRST);
