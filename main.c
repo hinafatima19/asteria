@@ -303,28 +303,3 @@ int main(void)
     }
 
 }
-
-
-#if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
-#pragma vector=USCI_A0_VECTOR
-__interrupt void USCI_A0_ISR(void)
-#elif defined(__GNUC__)
-void __attribute__ ((interrupt(USCI_A0_VECTOR))) USCI_A0_ISR (void)
-#else
-#error Compiler not supported!
-#endif
-{
-  switch(__even_in_range(UCA0IV, USCI_UART_UCTXCPTIFG))
-  {
-    case USCI_NONE: break;
-    case USCI_UART_UCRXIFG:
-      while(!(UCA0IFG&UCTXIFG));
-      UCA0TXBUF = UCA0RXBUF;
-      __no_operation();
-      break;
-    case USCI_UART_UCTXIFG: break;
-        // SEND DATA
-    case USCI_UART_UCSTTIFG: break;
-    case USCI_UART_UCTXCPTIFG: break;
-  }
-}
