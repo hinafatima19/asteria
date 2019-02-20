@@ -12,52 +12,50 @@ int mpptValues[35]; // MPPT Packet
 int detValues[35]; // DET Packet
 int lightTempValues[35]; //
 int uhfValues[8][35]; // UHF Packet
-
+unsigned int DAC_data;
 enum exp_status exp;
 enum packet_seq packet = HEADER;
+int exp3_tracker; // refers to a location in either the MPPT,DET of light/temp packet
+int adcseqnum;
+int measurement = 0;
 
 /*
- *  To be completed:
+ *  To be completed: halp needed
  *  -- SPI read from UHF chip onboard Payload
  *  -- insert each byte into array containing experiment 2 data
  */
-void UHFRead() { //
+void UHFRead(void) {
 
 }
 
-/*
- * To be completed:
- *  -- read DET voltage or current value from the ADC and place it into the array containing DET values
- */
-void addDETValue(){
-
-}
-
-
-/*
- * To be completed:
- *  -- read MPPT voltage or current value from the ADC and place it into the array containing MPPT values
- */
-void addMPPTValue(){
+void run_exp2(void){
 
 }
 
 /**
- * To be completed
- * -- send experiment 2 data to OBC using UART module
+ * function to run experiment 3
  */
-void sendExperiment2Data(void){
-
+void run_exp3(int pos){
+    int flag = 0;
+    if (pos > 17){
+        measurement = 45;
+        return;
+    }
+    while (1){
+        if(adcseqnum == 2){
+            ADCCCTL0 &= ~(ADCON); // turn off ADC
+            break;
+        }
+        else{
+            while(ADCCTL1 & ADCBUSY); // Wait if ADC core is active
+            flag = 1;
+            ADCCTL0 |= ADCENC | ADCSC;
+            while(flag);
+        }
+    }
+    measurement++;
 }
 
-
-/**
- * To be completed
- * -- send experiment 3 data to OBC using UART module
- */
-void sendExperiment3Data(int mppt_data[], int det_data[]){
-
-}
 
 void Software_Trim(void) // Credit to Darren Lu of Texas Instruments
 {
@@ -153,7 +151,7 @@ void setupLXT(void){ // Credit to Darren Lu of Texas Instruments
       CSCTL5 |= DIVM_0 | DIVS_1;
 }
 
-void setupUART(){ // initialize UART module
+void setupUART(void){ // initialize UART module
 
 
     GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_UCA0TXD, // configure TX pin
@@ -165,25 +163,31 @@ void setupUART(){ // initialize UART module
                                                GPIO_FUNCTION_UCA0RXD);
 
     // Baud rate and other parameters taken from table of recommended settings
-    // Here our BRCLK = SMCLK so
-    // frBRCLK = 1 MHz
-    // Baudrate = 9600
-    // N = 1000000 / 9600 = 6
+    // Here our BRCLK = ACLK so
+    // frBRCLK = 32.8 kHZ
+    // Baudrate = 4800
+    // N = 32768 / 4800 = 6
     // UCBRx = 6
-    // UCBRFx = 8
+    // UCBRFx = ignored since UCOS16 = 0
     // UCBRSx = 0x20
     UCA0CTLW0 = UCSWRST;                      // Put eUSCI in reset
-    UCA0CTLW0 |= UCSSEL__SMCLK;               // CLK = SMCLK
+    UCA0CTLW0 |= UCSSEL__ACLK;               // CLK = ACLK
     UCA0BRW = 6;
-    UCA0MCTLW = UCOS16 | UCBRF_8 | 0x2000;
+    UCA0MCTLW = 0xEE00;
     UCA0CTLW0 &= ~UCSWRST;
 
 }
 
-void setupWatchDog(void){
-    // initialize watchdog timer to interval of 16 secs
-    WDT_A_initWatchdogTimer(WDT_A_BASE, WDT_A_CLOCKSOURCE_ACLK, WDT_A_CLOCKDIVIER_512K);
-    WDT_A_start(WDT_A_BASE);
+void setupWatchDog(void){ // ping
+
+    TB1CCR0 = 12500; // 0.150 second period
+    TB1EX0 = TAIDEX_3;
+    TB1CCTL1 = OUTMOD_7;
+    TB1CTL = TBSSEL_2 | ID_2 | MC_1 | TBCLR; // Divide SMCLK by 12
+    TB1CCTL0 = CCIE;
+    P3DIR |=  BIT6; // WDT pin = output pin
+    P3OUT ^= BIT6;
+
 }
 
 void setupSPI(void){ // setup SPI master
@@ -199,19 +203,90 @@ void setupSPI(void){ // setup SPI master
 
    // Configure SPI module
    UCA1CTLW0 = UCSWRST;
-   UCA1CTLW0 = UCMSB | UCSYNC | UCMST | UCSSEL__SMCLK; 
+   UCA1CTLW0 = UCMSB | UCSYNC | UCMST | UCSSEL__SMCLK;
    UCA1BR0 = 208; // Baud rate 4800
    UCA1BR1 = 0;
    UCACTLW0 &= ~(UCSWRST);
 
-
 }
 
+
+
+/*
+ * Initialized the ADC using the following setup properties:
+ *
+ * Analog Input Pins:
+ * (1) Pin P5.0 -> Channel A8 (MMPT_VOUT)
+ * (2) Pin P5.1 -> Channel A9 (DET_VOUT)
+ * (3) Pin P5.2 -> Channel A10 (DET_I)
+ * (4) Pin P5.3 -> Channel A11 (MMPT_I)
+ * (5) Pin P1.3 -> Channel A3
+ *
+ * Sequence of Channel Measurement
+ * ADCCLK = ACLK/8 = 32768 / 4 = 8192 Hz
+ * Sample/Hold Time = 16 * 1/8192 = 1.95 ms
+ * Conversion Time = 15 * (1/8192) = 1.83 ms
+ * Total Time between sampling and conversion of 1 ADC input = 1.95 ms + 1.83 ms = 3.78 or about 4 ms
+ * Software Trigger used to start conversion
+ * Internal 2.5V reference used.
+ * Extended Sample Mode used.
+ * Sequence of channel mode used. The ADC will sample channels A11-A8 and then ignore channels A7-A4 before sampling channel A3
+ */
 void setupADC(void){
 
+    adcseqnum = 11;
+    exp3_tracker = 0;
+    P1SEL0 |= BIT3;
+    P1SEL1 |= BIT3; // Light Sensor
+
+    P5SEL0 |= (BIT3 | BIT2 | BIT1 | BIT0); // MPPT/DET voltage/current readings
+    P5SEL1 |= (BIT3 | BIT2 | BIT1 | BIT0);
+
+
+
+    ADCCTL0 &= ~ADCENC; // Disable ADC12 to control configuration
+    ADCCTL0 = ADCSHT2 | ADCON; // Sample Hold = 16*ACCLK
+    //ADCCTL0 = ADCSHT2 | ADCMSC | ADCON; // Sample Hold = 16*ACCLK, multi0sample on completion of prior
+    ADCCTL1 = ADCCONSEQ_1 | ADCDIV_3 | ADCSSEL_1; // EXTENDED SAMPLE MODE, divide ACLK by 4
+    ADCCTL2 &= ~(ADCRES); // clear ADCRES in ADCCTL2
+    ADCCTL2 |= ADCRES_2;
+    ADCIE |= ADCIE0; // enable ADC conversion complete interrupt
+    ADCMCTL0 |= ADCINCH_11 | ADCSREF_1 // enable internal 2.5 V reference
+
+    // Configure reference
+    PMMCTL0_H = PMMPW_H;                                // Unlock the PMM registers
+    PMMCTL2 |= INTREFEN | REFVSEL_2;                    // Enable internal 2.5V reference
+    __delay_cycles(400);
+
 }
 
-void setupDAC(){
+/*
+ * Initialize the DAC using the following setup properties:
+ * Using Pin P3.6 as OA output
+ * OA: configured to buffer mode
+ * PGA MSEL: set to floating status
+ * Vref = internal 2.5 V (can connect to external reference voltage if need be)
+ * DACLSEL = 00b : DAC output is updated immediately when data is written to the DACDAT register
+ *
+ */
+void setupDAC(void){
+
+  P3SEL0 |= BIT6; // selecting P1.1 as OA0O function
+  P3SEL1 |= BIT6; // set as buffer for DAC
+  DAC_data = 0;
+  // Configure reference module
+  PMMCTL0_H = PMMPW_H;                      // Unlock the PMM registers
+  PMMCTL2 = INTREFEN | REFVSEL_2;           // Enable internal 2.5V reference
+  while(!(PMMCTL2 & REFGENRDY));            // Poll till internal reference settles
+
+  SAC3DAC = DACSREF_1;  // Select int Vref as DAC reference
+  SAC3DAT = DAC_data;                       // Initial DAC data
+  SAC3DAC |= DACEN;                         // Enable DAC
+
+  SAC3OA = NMUXEN + PMUXEN + PSEL_1 + NSEL_1;//Select positive and negative pin input
+  SAC3OA |= OAPM;                            // Select low speed and low power mode
+  SAC3PGA = MSEL_1;                          // Set OA as buffer mode
+  SAC3OA |= SACEN + OAEN;                    // Enable SAC and OA
 
 }
 
@@ -224,7 +299,7 @@ void sendDataOut(int experiment, int frames){
       while(count < frames){
          int i;
          for(i = 0; i < 35; i++){
-           while(!(P2IN & BIT3)){} // wait for busy flag
+           while(!(P2IN & BIT0)){} // wait for busy flag
            EUSCI_A_UART_transmitData(EUSCI_A0_BASE, uhfValues[count][i]); // transmit data
            while(!(EUSCI_A_UART_getInterruptStatus(EUSCI_A0_BASE, UCTXIFG))); // wait for transmit buffer to empty itself
          }
@@ -261,33 +336,31 @@ void sendDataOut(int experiment, int frames){
         }
      }
 
-   }
+}
+// Configure 3 second timer
+void setupExpTimer(void){
 
-
+    TB3CCR0 = 12288; // 3 sec * 4096 hz = 12288
+    TB3CTL = TBSSEL_ACLK | MC_STOP | ID_3 | TACLR; // frequency = 4096 Hz
+}
 
 void msp_init(void){
 
+    WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
+    PM5CTL0 &= ~LOCKLPM5; // unlock ports
     setupLXT(); // setup up clock source
     setupUART(); // setup UART module
     setupSPI(); // setup SPI module
     setupWatchDog(); // setup WDT
-
+    setupExpTimer();
     exp = EXP_2;
+    TB3CTL = TBSSEL_ACLK | MC_UP | ID_3 | TACLR; // frequency = 4096 Hz
 
-    /**
-     * Add ADC CONFIGURATION
-     */
-
-    /*
-     * Add TIMER FOR EXPERIMENT #2 CONFIGURATION
-     */
-
-    PM5CTL0 &= ~LOCKLPM5; // unlock power manager
 }
 
 int main(void)
 {
-    //WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
+
     msp_init();
 
 
@@ -298,8 +371,97 @@ int main(void)
          sendDataOut(1,3); // send 3 data frames for Experiment 3
        }
 
-     WDT_A_resetTimer(WDT_A_BASE); // pet watchdog timer
+
 
     }
 
 }
+
+// Timer B1 interrupt service routine
+#if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
+#pragma vector = TIMER1_B0_VECTOR
+__interrupt void toggleWDT(void)
+#elif defined(__GNUC__)
+void __attribute__ ((interrupt(TIMER1_B0_VECTOR))) Timer1_B0_ISR (void)
+#else
+#error Compiler not supported!
+#endif
+{
+    P4OUT ^= BIT4; // toggle LED every 150 ms
+}
+
+// ADC interrupt service routine
+#if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
+#pragma vector=ADC_VECTOR
+__interrupt void ADC_ISR(void)
+#elif defined(__GNUC__)
+void __attribute__ ((interrupt(ADC_VECTOR))) ADC_ISR (void)
+#else
+#error Compiler not supported!
+#endif
+{
+    switch(__even_in_range(ADCIV,ADCIV_ADCIFG))
+    {
+        case ADCIV_NONE:
+            break;
+        case ADCIV_ADCOVIFG:
+            break;
+        case ADCIV_ADCTOVIFG:
+            break;
+        case ADCIV_ADCHIIFG:
+            break;
+        case ADCIV_ADCLOIFG:
+            break;
+        case ADCIV_ADCINIFG:
+            break;
+        case ADCIV_ADCIFG:
+            if (adcseqnum == 11){
+                mpptValues[i+16] = ADCMEM0;
+            }
+
+            else if(adcseqnum == 10){
+                detValues[i+16] = ADCMEM0;
+            }
+
+            else if(adcseqnum == 9){
+                detValues[i] = ADCMEM0;
+            }
+
+            else if(adcseqnum == 8){
+                mpptValues[i] = ADCMEM0;
+            }
+
+            else if(adcseqnum == 3){
+                lightTempValues[i] = ADCMEM0;
+            }
+            adcseqnum--;
+            flag = 0;
+            break;
+        default:
+            break;
+    }
+}
+
+#pragma vector = TIMER3_B0_VECTOR
+__interrupt void exp_ISR(){ // fires every seconds
+
+    if(exp == EXP_2){ // run experiment
+       run_exp2();
+       if(measurement >= 45){
+           exp = EXP_3;
+       }
+    }
+
+
+    else{ // else run experiment 3
+        run_exp3(exp3_tracker);
+        exp3_tracker++;
+        if(measurement >= 45){
+            exp = TRANS;
+            TB3CTL = TASSEL__ACLK | MC__STOP | TACLR; // stop timer
+        }
+
+    }
+
+}
+
