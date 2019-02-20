@@ -12,7 +12,7 @@ int mpptValues[35]; // MPPT Packet
 int detValues[35]; // DET Packet
 int lightTempValues[35]; //
 int uhfValues[8][35]; // UHF Packet
-unsigned int DAC_data;
+unsigned int DAC_data = 0;
 enum exp_status exp;
 enum packet_seq packet = HEADER;
 int exp3_tracker; // refers to a location in either the MPPT,DET of light/temp packet
@@ -461,6 +461,8 @@ __interrupt void exp_ISR(){ // fires every seconds
         run_exp3(exp3_tracker);
         exp3_tracker++;
         adcseqnum = 11;
+        DAC_data += 254;
+        SAC3DAT = DAC_data;
         if(measurement >= 45){
             exp = TRANS;
             TB3CTL = TASSEL__ACLK | MC__STOP | TACLR; // stop timer
