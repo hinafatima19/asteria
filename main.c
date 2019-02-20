@@ -36,6 +36,8 @@ void run_exp2(void){
  * function to run experiment 3
  */
 void run_exp3(int pos){
+
+
     int flag = 0;
     if (pos > 17){
         measurement = 45;
@@ -43,7 +45,7 @@ void run_exp3(int pos){
     }
     while (1){
         if(adcseqnum == 2){
-            ADCCCTL0 &= ~(ADCON); // turn off ADC
+            ADCCCTL0 &= (ADCENC); // turn off ADC
             break;
         }
         else{
@@ -351,6 +353,8 @@ void msp_init(void){
     setupLXT(); // setup up clock source
     setupUART(); // setup UART module
     setupSPI(); // setup SPI module
+    setupADC();
+    setupDAC();
     setupWatchDog(); // setup WDT
     setupExpTimer();
     exp = EXP_2;
@@ -456,6 +460,7 @@ __interrupt void exp_ISR(){ // fires every seconds
     else{ // else run experiment 3
         run_exp3(exp3_tracker);
         exp3_tracker++;
+        adcseqnum = 11;
         if(measurement >= 45){
             exp = TRANS;
             TB3CTL = TASSEL__ACLK | MC__STOP | TACLR; // stop timer
