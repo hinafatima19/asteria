@@ -171,7 +171,7 @@ void setupUART(void){ // initialize UART module
     // N = 32768 / 4800 = 6
     // UCBRx = 6
     // UCBRFx = ignored since UCOS16 = 0
-    // UCBRSx = 0x20
+    // UCBRSx = 0xEE
     UCA0CTLW0 = UCSWRST;                      // Put eUSCI in reset
     UCA0CTLW0 |= UCSSEL__ACLK;               // CLK = ACLK
     UCA0BRW = 6;
