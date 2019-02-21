@@ -391,7 +391,7 @@ void __attribute__ ((interrupt(TIMER1_B0_VECTOR))) Timer1_B0_ISR (void)
 #error Compiler not supported!
 #endif
 {
-    P4OUT ^= BIT4; // toggle LED every 150 ms
+    P3OUT ^= BIT6; // toggle LED every 150 ms
 }
 
 // ADC interrupt service routine
