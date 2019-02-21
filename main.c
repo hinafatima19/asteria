@@ -328,7 +328,7 @@ void sendDataOut(int experiment, int frames){
                 dataVal = lightTempValues[i]; // get light/temperature value from buffer
             }
 
-          while(!(P2IN & BIT3)){} // wait for busy flag
+          while(!(P2IN & BIT0)){} // wait for busy flag
            EUSCI_A_UART_transmitData(EUSCI_A0_BASE, dataVal); // transmit data
            while(!(EUSCI_A_UART_getInterruptStatus(EUSCI_A0_BASE, UCTXIFG))); // wait for transmit buffer to empty itself
          }
