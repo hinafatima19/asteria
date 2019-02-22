@@ -1,20 +1,20 @@
 #include <msp430.h> 
 #include "driverlib.h"
 #include "Board.h"
+
 /**
  * main.c
  */
-
 enum packet_seq {HEADER,DATA}
-enum exp_status {EXP_2, EXP_3,TRANS}
+
 
 int mpptValues[35]; // MPPT Packet
 int detValues[35]; // DET Packet
-int lightTempValues[35]; //
+int lightTempValues[35]; // light temperature sensor packet for experiment
 int uhfValues[8][35]; // UHF Packet
 unsigned int DAC_data = 0;
 enum exp_status exp;
-enum packet_seq packet = HEADER;
+
 int exp3_tracker; // refers to a location in either the MPPT,DET of light/temp packet
 int adcseqnum;
 int measurement = 0;
@@ -37,7 +37,6 @@ void run_exp2(void){
  */
 void run_exp3(int pos){
 
-
     int flag = 0;
     if (pos > 17){
         measurement = 45;
@@ -45,17 +44,18 @@ void run_exp3(int pos){
     }
     while (1){
         if(adcseqnum == 2){
-            ADCCCTL0 &= (ADCENC); // turn off ADC
-            break;
+            ADCCTL0 &= (ADCENC); // turn off ADC
+            measurement++; // increment experiment trial
+            return;
         }
         else{
             while(ADCCTL1 & ADCBUSY); // Wait if ADC core is active
-            flag = 1;
-            ADCCTL0 |= ADCENC | ADCSC;
-            while(flag);
+            flag = 1; // busy
+            ADCCTL0 |= ADCENC | ADCSC; // start ADC conversion
+            while(flag); // ISR should set to this to 0
         }
     }
-    measurement++;
+
 }
 
 
@@ -150,9 +150,20 @@ void setupLXT(void){ // Credit to Darren Lu of Texas Instruments
 
      CSCTL4 = SELMS__DCOCLKDIV | SELA__XT1CLK;  // Set ACLK = XT1CLK = 32768Hz
                                                 // DCOCLK = MCLK and SMCLK source
-      CSCTL5 |= DIVM_0 | DIVS_1;
+     CSCTL5 |= DIVM_0 | DIVS_1;
 }
 
+/*
+ * Initialize UART module
+ * Baud rate and other parameters taken from table of recommended settings
+ * Here our BRCLK = ACLK so
+ * frBRCLK = 32.8 kHZ
+ * Baudrate = 4800
+ * N = 32768 / 4800 = 6
+ * UCBRx = 6
+ * UCBRFx = ignored since UCOS16 = 0
+ * UCBRSx = 0xEE
+ */
 void setupUART(void){ // initialize UART module
 
 
@@ -164,14 +175,6 @@ void setupUART(void){ // initialize UART module
                                                GPIO_PIN_UCA0RXD,
                                                GPIO_FUNCTION_UCA0RXD);
 
-    // Baud rate and other parameters taken from table of recommended settings
-    // Here our BRCLK = ACLK so
-    // frBRCLK = 32.8 kHZ
-    // Baudrate = 4800
-    // N = 32768 / 4800 = 6
-    // UCBRx = 6
-    // UCBRFx = ignored since UCOS16 = 0
-    // UCBRSx = 0xEE
     UCA0CTLW0 = UCSWRST;                      // Put eUSCI in reset
     UCA0CTLW0 |= UCSSEL__ACLK;               // CLK = ACLK
     UCA0BRW = 6;
@@ -180,13 +183,19 @@ void setupUART(void){ // initialize UART module
 
 }
 
+
+/**
+ * Initialize output pin and timer to pin Watchdog Timer
+ * Current Watchdog Timer Interval: 200 ms
+ * Timer Interrupt occurs every 150 ms.
+ */
 void setupWatchDog(void){ // ping
 
     TB1CCR0 = 12500; // 0.150 second period
-    TB1EX0 = TAIDEX_3;
+    TB1EX0 = TBIDEX_3;
     TB1CCTL1 = OUTMOD_7;
     TB1CTL = TBSSEL_2 | ID_2 | MC_1 | TBCLR; // Divide SMCLK by 12
-    TB1CCTL0 = CCIE;
+    TB1CCTL0 = CCIE; // enable interrupts
     P3DIR |=  BIT6; // WDT pin = output pin
     P3OUT ^= BIT6;
 
@@ -212,8 +221,6 @@ void setupSPI(void){ // setup SPI master
 
 }
 
-
-
 /*
  * Initialized the ADC using the following setup properties:
  *
@@ -222,7 +229,7 @@ void setupSPI(void){ // setup SPI master
  * (2) Pin P5.1 -> Channel A9 (DET_VOUT)
  * (3) Pin P5.2 -> Channel A10 (DET_I)
  * (4) Pin P5.3 -> Channel A11 (MMPT_I)
- * (5) Pin P1.3 -> Channel A3
+ * (5) Pin P1.3 -> Channel A3 (Light Sensor)
  *
  * Sequence of Channel Measurement
  * ADCCLK = ACLK/8 = 32768 / 4 = 8192 Hz
@@ -236,8 +243,9 @@ void setupSPI(void){ // setup SPI master
  */
 void setupADC(void){
 
-    adcseqnum = 11;
+    adcseqnum = 11; // Start at channel A1
     exp3_tracker = 0;
+
     P1SEL0 |= BIT3;
     P1SEL1 |= BIT3; // Light Sensor
 
@@ -255,11 +263,6 @@ void setupADC(void){
     ADCIE |= ADCIE0; // enable ADC conversion complete interrupt
     ADCMCTL0 |= ADCINCH_11 | ADCSREF_1 // enable internal 2.5 V reference
 
-    // Configure reference
-    PMMCTL0_H = PMMPW_H;                                // Unlock the PMM registers
-    PMMCTL2 |= INTREFEN | REFVSEL_2;                    // Enable internal 2.5V reference
-    __delay_cycles(400);
-
 }
 
 /*
@@ -269,17 +272,13 @@ void setupADC(void){
  * PGA MSEL: set to floating status
  * Vref = internal 2.5 V (can connect to external reference voltage if need be)
  * DACLSEL = 00b : DAC output is updated immediately when data is written to the DACDAT register
- *
  */
 void setupDAC(void){
 
   P3SEL0 |= BIT6; // selecting P1.1 as OA0O function
   P3SEL1 |= BIT6; // set as buffer for DAC
   DAC_data = 0;
-  // Configure reference module
-  PMMCTL0_H = PMMPW_H;                      // Unlock the PMM registers
-  PMMCTL2 = INTREFEN | REFVSEL_2;           // Enable internal 2.5V reference
-  while(!(PMMCTL2 & REFGENRDY));            // Poll till internal reference settles
+
 
   SAC3DAC = DACSREF_1;  // Select int Vref as DAC reference
   SAC3DAT = DAC_data;                       // Initial DAC data
@@ -339,13 +338,16 @@ void sendDataOut(int experiment, int frames){
      }
 
 }
+
 // Configure 3 second timer
 void setupExpTimer(void){
-
     TB3CCR0 = 12288; // 3 sec * 4096 hz = 12288
-    TB3CTL = TBSSEL_ACLK | MC_STOP | ID_3 | TACLR; // frequency = 4096 Hz
+    TB3CTL = TBSSEL__ACLK | MC__STOP | ID_3 | TACLR; // frequency = 4096 Hz
 }
 
+/**
+ * Initialize peripherals
+ */
 void msp_init(void){
 
     WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
@@ -353,12 +355,20 @@ void msp_init(void){
     setupLXT(); // setup up clock source
     setupUART(); // setup UART module
     setupSPI(); // setup SPI module
-    setupADC();
-    setupDAC();
+
+    // Configure reference module
+    PMMCTL0_H = PMMPW_H;                      // Unlock the PMM registers
+    PMMCTL2 = INTREFEN | REFVSEL_2;           // Enable internal 2.5V reference
+    while(!(PMMCTL2 & REFGENRDY));            // Poll till internal reference settles
+    setupADC(); // setup ADC
+    setupDAC(); // setup DAC
+
     setupWatchDog(); // setup WDT
-    setupExpTimer();
+    setupExpTimer(); // setup experiment timer scheduler
+
+
     exp = EXP_2;
-    TB3CTL = TBSSEL_ACLK | MC_UP | ID_3 | TACLR; // frequency = 4096 Hz
+    TB3CTL = TBSSEL__ACLK | MC__UP | ID_3 | TACLR; // frequency = 4096 Hz
 
 }
 
@@ -471,4 +481,3 @@ __interrupt void exp_ISR(){ // fires every seconds
     }
 
 }
-
