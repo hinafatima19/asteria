@@ -44,7 +44,7 @@ void run_exp3(int pos){
     }
     while (1){
         if(adcseqnum == 2){
-            ADCCTL0 &= (ADCENC); // turn off ADC
+            ADCCTL0 &= ~(ADCENC); // turn off ADC
             measurement++; // increment experiment trial
             return;
         }
@@ -59,7 +59,7 @@ void run_exp3(int pos){
 }
 
 
-void Software_Trim(void) // Credit to Darren Lu of Texas Instruments
+/*void Software_Trim(void) // Credit to Darren Lu of Texas Instruments
 {
     unsigned int oldDcoTap = 0xffff;
     unsigned int newDcoTap = 0xffff;
@@ -126,11 +126,12 @@ void Software_Trim(void) // Credit to Darren Lu of Texas Instruments
     CSCTL0 = csCtl0Copy;                       // Reload locked DCOTAP
     CSCTL1 = csCtl1Copy;                       // Reload locked DCOFTRIM
     while(CSCTL7 & (FLLUNLOCK0 | FLLUNLOCK1)); // Poll until FLL is locked
-}
+}*/
 
 void setupLXT(void){ // Credit to Darren Lu of Texas Instruments
 
-    WDTCTL = WDTPW | WDTHOLD;               // Stop watchdog timer
+    CSCTL6 |= XTS; // select external crystal
+    CSCTL4 = SELMS__XT1CLK | SELA__REFOCLK; // Set MCLK = XT1CLK = 8MHz, ACLK = internal 32.8 kHz
 
     P2SEL1 |= BIT6 | BIT7;                  // P2.6~P2.7: crystal pins
 
@@ -140,17 +141,8 @@ void setupLXT(void){ // Credit to Darren Lu of Texas Instruments
          SFRIFG1 &= ~OFIFG;
      } while (SFRIFG1 & OFIFG);              // Test oscillator fault flag
 
-     __bis_SR_register(SCG0);                // disable FLL
-     CSCTL3 |= SELREF__XT1CLK;               // Set XT1CLK as FLL reference source
-     CSCTL1 = DCOFTRIMEN_1 | DCOFTRIM0 | DCOFTRIM1 | DCORSEL_3;// DCOFTRIM=3, DCO Range = 8MHz
-     CSCTL2 = FLLD_0 + 243;                  // DCODIV = 8MHz
-     __delay_cycles(3);
-     __bic_SR_register(SCG0);                // enable FLL
-     Software_Trim();                        // Software Trim to get the best DCOFTRIM value
+    CSCTL5 |= DIVM_3; // MCLK = 1MHz = SMCLK
 
-     CSCTL4 = SELMS__DCOCLKDIV | SELA__XT1CLK;  // Set ACLK = XT1CLK = 32768Hz
-                                                // DCOCLK = MCLK and SMCLK source
-     CSCTL5 |= DIVM_0 | DIVS_1;
 }
 
 /*
@@ -211,13 +203,14 @@ void setupSPI(void){ // setup SPI master
     GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
                                                GPIO_PIN2 + GPIO_PIN3,
                                                GPIO_TERNARY_MODULE_FUNCTION);
-
+   // DIO1-5 pin set to output
+   P6OUT = (BIT5 | BIT4 | BIT3 | BIT2| BIT1 | BIT0);
    // Configure SPI module
    UCA1CTLW0 = UCSWRST;
    UCA1CTLW0 = UCMSB | UCSYNC | UCMST | UCSSEL__SMCLK;
    UCA1BR0 = 208; // Baud rate 4800
    UCA1BR1 = 0;
-   UCACTLW0 &= ~(UCSWRST);
+   UCA1CTLW0 &= ~(UCSWRST);
 
 }
 
@@ -267,7 +260,7 @@ void setupADC(void){
 
 /*
  * Initialize the DAC using the following setup properties:
- * Using Pin P3.6 as OA output
+ * Using Pin P3.5 as OA output
  * OA: configured to buffer mode
  * PGA MSEL: set to floating status
  * Vref = internal 2.5 V (can connect to external reference voltage if need be)
@@ -275,8 +268,8 @@ void setupADC(void){
  */
 void setupDAC(void){
 
-  P3SEL0 |= BIT6; // selecting P1.1 as OA0O function
-  P3SEL1 |= BIT6; // set as buffer for DAC
+  P3SEL0 |= BIT5; // selecting P3.5 as OA0O function
+  P3SEL1 |= BIT5; // set as buffer for DAC
   DAC_data = 0;
 
 
@@ -304,6 +297,7 @@ void sendDataOut(int experiment, int frames){
            EUSCI_A_UART_transmitData(EUSCI_A0_BASE, uhfValues[count][i]); // transmit data
            while(!(EUSCI_A_UART_getInterruptStatus(EUSCI_A0_BASE, UCTXIFG))); // wait for transmit buffer to empty itself
          }
+         count++;
       }
 
    }
@@ -461,8 +455,8 @@ __interrupt void exp_ISR(){ // fires every seconds
 
     if(exp == EXP_2){ // run experiment
        run_exp2();
-       if(measurement >= 45){
-           exp = EXP_3;
+       if(measurement >= 45){ // end of experiment #2
+           exp = EXP_3; // transition to experiment #3
        }
     }
 
